@@ -205,26 +205,129 @@ define([
                     download: true
                 };
                 
-                $scope.log("Exportando via servidor:", exportOpts.format);
-                
-                $scope.ext.model.exportData(
-                    exportOpts.format,
-                    "/qHyperCubeDef",
-                    exportOpts.filename,
-                    exportOpts.download
-                ).then(function (retVal) {
-                    if (exportOpts.download) {
-                        var qUrl = retVal.result ? retVal.result.qUrl : retVal.qUrl;
-                        var link = $scope.getBasePath() + qUrl;
-                        window.open(link);
-                        $scope.log("Download iniciado:", link);
+                // Garante que o nome do arquivo tenha a extensão correta
+                var filename = exportOpts.filename;
+                if (filename) {
+                    // Remove extensões existentes para evitar duplicação
+                    filename = filename.replace(/\.(xlsx|xls|csv|tsv)$/i, '');
+                    
+                    // Adiciona a extensão correta baseada no formato
+                    switch (exportOpts.format) {
+                        case "OOXML":
+                            filename += ".xlsx";
+                            break;
+                        case "CSV_C":
+                            filename += ".csv";
+                            break;
+                        case "CSV_T":
+                            filename += ".tsv";
+                            break;
+                        default:
+                            filename += ".xlsx";
                     }
-                }).catch(function (err) {
-                    $scope.log("Erro na exportação server-side:", err);
-                }).finally(function () {
-                    $scope.exporting = false;
-                    $scope.log("Exportação server-side concluída");
-                });
+                } else {
+                    // Nome padrão se não configurado
+                    switch (exportOpts.format) {
+                        case "OOXML":
+                            filename = "export.xlsx";
+                            break;
+                        case "CSV_C":
+                            filename = "export.csv";
+                            break;
+                        case "CSV_T":
+                            filename = "export.tsv";
+                            break;
+                        default:
+                            filename = "export.xlsx";
+                    }
+                }
+                
+                $scope.log("Exportando via servidor:", exportOpts.format, "com nome:", filename);
+                
+                // Para XLSX (OOXML), tenta múltiplas abordagens
+                if (exportOpts.format === "OOXML") {
+                    $scope.log("Tentando exportação XLSX com nome personalizado...");
+                    
+                    // Abordagem 1: Tenta com o nome do arquivo na API
+                    $scope.ext.model.exportData(
+                        exportOpts.format,
+                        "/qHyperCubeDef",
+                        filename, // Tenta com o nome completo
+                        exportOpts.download
+                    ).then(function (retVal) {
+                        if (exportOpts.download) {
+                            var qUrl = retVal.result ? retVal.result.qUrl : retVal.qUrl;
+                            var link = $scope.getBasePath() + qUrl;
+                            
+                            $scope.log("URL de download obtida:", link);
+                            
+                            // Verifica se o nome foi aplicado corretamente
+                            if (retVal.result && retVal.result.qUrl) {
+                                var urlParts = retVal.result.qUrl.split('/');
+                                var downloadedFilename = urlParts[urlParts.length - 1];
+                                $scope.log("Nome do arquivo retornado pela API:", downloadedFilename);
+                                
+                                // Se o nome foi aplicado, usa download direto
+                                if (downloadedFilename && downloadedFilename !== filename) {
+                                    $scope.log("Nome não foi aplicado, usando múltiplas estratégias...");
+                                    $scope.tryMultipleDownloadStrategies(link, filename);
+                                } else {
+                                    $scope.log("Nome aplicado corretamente, download direto...");
+                                    window.open(link);
+                                    $scope.exporting = false; // Reseta o loading
+                                }
+                            } else {
+                                // Fallback para múltiplas estratégias
+                                $scope.tryMultipleDownloadStrategies(link, filename);
+                            }
+                        }
+                    }).catch(function (err) {
+                        $scope.log("Erro na exportação XLSX com nome:", err);
+                        
+                        // Abordagem 2: Tenta sem nome para obter o arquivo
+                        $scope.log("Tentando exportação XLSX sem nome...");
+                        $scope.ext.model.exportData(
+                            exportOpts.format,
+                            "/qHyperCubeDef",
+                            "", // Sem nome
+                            exportOpts.download
+                        ).then(function (retVal2) {
+                            if (retVal2.download) {
+                                var qUrl2 = retVal2.result ? retVal2.result.qUrl : retVal2.qUrl;
+                                var link2 = $scope.getBasePath() + qUrl2;
+                                $scope.tryMultipleDownloadStrategies(link2, filename);
+                            }
+                        }).catch(function (err2) {
+                            $scope.log("Erro na exportação XLSX sem nome:", err2);
+                            $scope.exporting = false; // Reseta o loading em caso de erro
+                        }).finally(function () {
+                            // Não reseta aqui, pois tryMultipleDownloadStrategies pode estar rodando
+                        });
+                    }).finally(function () {
+                        // Não reseta aqui, pois pode haver operações em andamento
+                        $scope.log("Exportação XLSX concluída");
+                    });
+                } else {
+                    // Para CSV, usa a abordagem padrão
+                    $scope.ext.model.exportData(
+                        exportOpts.format,
+                        "/qHyperCubeDef",
+                        filename,
+                        exportOpts.download
+                    ).then(function (retVal) {
+                        if (exportOpts.download) {
+                            var qUrl = retVal.result ? retVal.result.qUrl : retVal.qUrl;
+                            var link = $scope.getBasePath() + qUrl;
+                            window.open(link);
+                            $scope.log("Download CSV iniciado:", link);
+                        }
+                    }).catch(function (err) {
+                        $scope.log("Erro na exportação CSV:", err);
+                    }).finally(function () {
+                        $scope.exporting = false;
+                        $scope.log("Exportação CSV concluída");
+                    });
+                }
             };
             
             // Exportação client-side (CSV_C__CLIENT)
@@ -240,12 +343,19 @@ define([
                         data
                     );
                     
-                    $scope.arrayToCSVDownload(
-                        dataArray,
-                        $scope.layout.props.exportFileName || "export.csv"
-                    );
+                    // Garante que o nome do arquivo tenha extensão .csv para client-side
+                    var filename = $scope.layout.props.exportFileName;
+                    if (filename) {
+                        // Remove extensões existentes para evitar duplicação
+                        filename = filename.replace(/\.(csv|tsv)$/i, '');
+                        filename += ".csv";
+                    } else {
+                        filename = "export.csv";
+                    }
                     
-                    $scope.log("Exportação client-side concluída");
+                    $scope.arrayToCSVDownload(dataArray, filename);
+                    
+                    $scope.log("Exportação client-side concluída com nome:", filename);
                 }).catch(function (err) {
                     $scope.log("Erro na exportação client-side:", err);
                 }).finally(function () {
@@ -424,6 +534,154 @@ define([
                 } catch (error) {
                     $scope.log("Erro ao gerar CSV:", error);
                 }
+            };
+            
+            // Faz download do arquivo XLSX e renomeia
+            $scope.downloadAndRenameXLSX = function (url, filename) {
+                try {
+                    $scope.log("Iniciando download XLSX de:", url);
+                    
+                    // Método 1: Tenta usar fetch para baixar o arquivo e renomear
+                    if (window.fetch) {
+                        $scope.log("Usando fetch para download XLSX...");
+                        
+                        fetch(url)
+                            .then(function(response) {
+                                if (!response.ok) {
+                                    throw new Error('Erro na resposta: ' + response.status);
+                                }
+                                return response.blob();
+                            })
+                            .then(function(blob) {
+                                // Cria um blob com o tipo correto para XLSX
+                                var xlsxBlob = new Blob([blob], { 
+                                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+                                });
+                                
+                                // Usa FileSaver.js para fazer o download com o nome correto
+                                saveAs(xlsxBlob, filename);
+                                $scope.log("Download XLSX concluído com nome:", filename);
+                                $scope.exporting = false; // Reseta o loading
+                            })
+                            .catch(function(error) {
+                                $scope.log("Erro no fetch, tentando método alternativo:", error);
+                                // Fallback para método alternativo
+                                $scope.downloadXLSXAlternative(url, filename);
+                            });
+                    } else {
+                        // Fallback para navegadores sem suporte a fetch
+                        $scope.log("Fetch não suportado, usando método alternativo...");
+                        $scope.downloadXLSXAlternative(url, filename);
+                    }
+                    
+                } catch (error) {
+                    $scope.log("Erro no download XLSX:", error);
+                    // Fallback: abre em nova aba se o download falhar
+                    window.open(url, '_blank');
+                    $scope.exporting = false; // Reseta o loading
+                }
+            };
+            
+            // Método alternativo para download XLSX
+            $scope.downloadXLSXAlternative = function (url, filename) {
+                try {
+                    $scope.log("Tentando método alternativo para XLSX...");
+                    
+                    // Método 2: Usa XMLHttpRequest para mais controle
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('GET', url, true);
+                    xhr.responseType = 'blob';
+                    xhr.timeout = 10000; // 10 segundos de timeout
+                    
+                    xhr.onload = function() {
+                        if (xhr.status === 200) {
+                            var blob = xhr.response;
+                            var xlsxBlob = new Blob([blob], { 
+                                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+                            });
+                            
+                            // Usa FileSaver.js para fazer o download com o nome correto
+                            saveAs(xlsxBlob, filename);
+                            $scope.log("Download XLSX via XHR concluído com nome:", filename);
+                            $scope.exporting = false; // Reseta o loading
+                        } else {
+                            $scope.log("Erro XHR, tentando iframe...");
+                            $scope.downloadXLSXWithIframe(url, filename);
+                        }
+                    };
+                    
+                    xhr.onerror = function() {
+                        $scope.log("Erro XHR, tentando iframe...");
+                        $scope.downloadXLSXWithIframe(url, filename);
+                    };
+                    
+                    xhr.ontimeout = function() {
+                        $scope.log("Timeout XHR, tentando iframe...");
+                        $scope.downloadXLSXWithIframe(url, filename);
+                    };
+                    
+                    xhr.send();
+                    
+                } catch (error) {
+                    $scope.log("Erro no método alternativo XHR:", error);
+                    // Fallback para iframe
+                    $scope.downloadXLSXWithIframe(url, filename);
+                }
+            };
+            
+            // Método com iframe para download XLSX
+            $scope.downloadXLSXWithIframe = function (url, filename) {
+                try {
+                    $scope.log("Tentando download XLSX via iframe...");
+                    
+                    // Cria um iframe temporário para fazer o download
+                    var iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = url;
+                    
+                    // Adiciona ao DOM
+                    document.body.appendChild(iframe);
+                    
+                    // Remove após um tempo
+                    setTimeout(function() {
+                        document.body.removeChild(iframe);
+                        $scope.log("Download XLSX via iframe concluído");
+                        $scope.exporting = false; // Reseta o loading
+                    }, 2000);
+                    
+                } catch (error) {
+                    $scope.log("Erro no método iframe:", error);
+                    // Último recurso: abre em nova aba
+                    window.open(url, '_blank');
+                    $scope.exporting = false; // Reseta o loading
+                }
+            };
+            
+            // Função para tentar múltiplas estratégias de download XLSX
+            $scope.tryMultipleDownloadStrategies = function (url, filename) {
+                $scope.log("Tentando múltiplas estratégias para download XLSX...");
+                
+                // Estratégia 1: Fetch + FileSaver
+                if (window.fetch) {
+                    $scope.log("Estratégia 1: Fetch + FileSaver");
+                    $scope.downloadAndRenameXLSX(url, filename);
+                } else if (window.XMLHttpRequest) {
+                    // Estratégia 2: XMLHttpRequest + FileSaver
+                    $scope.log("Estratégia 2: XMLHttpRequest + FileSaver");
+                    $scope.downloadXLSXAlternative(url, filename);
+                } else {
+                    // Estratégia 3: Iframe
+                    $scope.log("Estratégia 3: Iframe");
+                    $scope.downloadXLSXWithIframe(url, filename);
+                }
+                
+                // Garante que o loading seja resetado após um tempo
+                setTimeout(function() {
+                    if ($scope.exporting) {
+                        $scope.log("Resetando loading após timeout de segurança");
+                        $scope.exporting = false;
+                    }
+                }, 5000); // 5 segundos de timeout de segurança
             };
             
         }]
